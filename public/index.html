@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Sync Web</title>
+<meta name="viewport" content="initial-scale=1.0"/>
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script type="text/javascript">
+
+var $adressbarWrapper = null,
+        $adressbarForm = null,
+        $iframeWrapper = null,
+        $iframe = null,
+        $urlInput = null,
+        id = null,
+        socket = io.connect( location.protocol + "//" + location.host ),
+        session = null,
+        url = null,
+        clientId = makeid()
+        ;
+
+//window.onbeforeunload = function () {
+//    return 'My Warning message.'
+//    //UNCOMMENT ABOVE LINE AND put your warning message
+//}
+//
+//document.attachEvent( "onkeydown", my_onkeydown_handler );
+//
+//function my_onkeydown_handler() {
+//    switch ( event.keyCode ) {
+//
+//        case 116 : // 'F5'
+//            event.returnValue = false;
+//            event.keyCode = 0;
+//            window.status = "F5 is disabled";
+//            break;
+//    }
+//}
+
+// SOCKET
+
+socket.on( 'connect', function () {
+    console.log( "Socket connect" );
+    init();
+
+} );
+socket.on( 'join', function ( options ) {
+    console.log( "Socket join", options );
+    joinSession( options );
+} );
+
+// /SOCKET
+
+$( function () {
+
+    $adressbarWrapper = $( "#adressbar_wrapper" );
+    $adressbarForm = $( "#adressbar_form" );
+    $iframeWrapper = $( "#iframe_wrapper" );
+    $iframe = $( "#iframe" );
+    $urlInput = $( "#url" );
+
+    // adressbar for submit
+    $adressbarForm.submit( function ( event ) {
+        event.preventDefault();
+        onAdressbar();
+    } );
+
+    $iframe.load( onIframeLoad );
+
+//    $( window ).bind( 'beforeunload', function ( event ) {
+//        event.returnValue = "Bye";
+//        return message;
+//    } );
+} );
+
+// window hash change
+$( window ).on( 'hashchange', function () {
+    init();
+} );
+
+function onIframeLoad() {
+    if ( $iframe.attr( "data-setby" ) !== clientId ) {
+        return;
+    }
+
+    doSessionChange( { url: $iframe.attr( "src" ) } );
+
+    try {
+        var contents = $( "#iframe" ).contents();
+
+        contents.bind( "click", function ( event ) {
+            if ( event.originalEvent ) {
+                doSessionChange( { click: dompath( event.target ) } )
+            }
+        } );
+
+        contents.find( "input" ).focus( function ( event ) {
+            console.log( "Input focus", event, !!event.originalEvent );
+            if ( event.originalEvent ) {
+                setTimeout( function () {
+                    doSessionChange( { focus: dompath( event.target ) } )
+                }, 10 );
+            }
+        } );
+    }
+    catch ( e ) {
+        console.warn( "Cross domain, cant listen" );
+    }
+}
+
+function init() {
+    // id changes, init session
+    if ( !id || id !== getHash( 0 ) ) {
+        initSession( getHash( 0 ) );
+    }
+    // hide/show addressbar
+    $adressbarWrapper.toggleClass( "hide", hasHash( "clean" ) );
+}
+
+function initSession( _id ) {
+    // disconnect session if exists
+    if ( session ) {
+        session.disconnect();
+        console.log( "Disconnect session" );
+        session = null;
+    }
+
+    console.log( "Init socket with id", _id );
+    socket.emit( "init", { 'id': _id, 'url': $urlInput.val() || null } );
+}
+
+function joinSession( options ) {
+    id = options.id;
+    session = io.connect( location.protocol + "//" + location.host + "/" + options.id );
+    console.log( "JoinSession", options, session );
+    session.on( "connect", function () {
+        console.log( "Socket session connect" );
+
+    } );
+    session.on( "change", function ( options ) {
+        console.log( "Socket session change", options );
+        onSessionChange( options );
+    } );
+
+    setHash( 0, id );
+}
+
+function doSessionChange( options ) {
+    console.log( "DoSessionChange:", options );
+    if ( session ) {
+        console.log( "DoSessionChange: emit.change" );
+        options.client = clientId;
+        session.emit( "change", options );
+    }
+    else {
+        initSession( id );
+    }
+}
+
+function onSessionChange( options ) {
+    console.log( "OnSessionChange", options );
+
+    var contents = null;
+    try {
+        contents = $( "#iframe" ).contents();
+    }
+    catch ( e ) {
+
+    }
+
+    if ( options.url ) {
+        url = options.url;
+        $urlInput.val( url );
+        $iframe.attr( "data-setby", options.client );
+        $iframe.attr( "src", url );
+    }
+    if ( options.click ) {
+        var $el = contents.find( options.click )
+        console.log( "Click element", $el );
+        $el.trigger( "click" );
+    }
+    if ( options.focus ) {
+        var $el = contents.find( options.focus )
+        console.log( "Focus element", $el );
+        $el.focus();
+    }
+}
+
+function onAdressbar() {
+    console.log( "OnAddressbar", $urlInput.val() )
+    if ( $urlInput.val() ) {
+        url = $urlInput.val();
+        $iframe.attr( "data-setby", clientId );
+        $iframe.attr( "src", url );
+    }
+}
+
+function setHash( index, value ) {
+    var hash = location.hash.substr( 1 ).split( "/" );
+    hash[index] = value;
+    window.location.hash = hash.join( "/" );
+}
+
+function getHash( index ) {
+    return location.hash.substr( 1 ).split( "/" )[index] || null;
+}
+
+function hasHash( key ) {
+    return location.hash.substr( 1 ).split( "/" ).indexOf( key ) > -1;
+}
+
+function dompath( element ) {
+    var path = '';
+    for ( ; element && element.nodeType == 1; element = element.parentNode ) {
+        var inner = $( element ).children().length == 0 ? $( element ).text() : '';
+        var eleSelector = element.tagName.toLowerCase() +
+                ((inner.length > 0) ? ':contains(\'' + inner + '\')' : '');
+        path = ' ' + eleSelector + path;
+    }
+    return path;
+}
+
+function makeid( length ) {
+    length = length || 7;
+    var text = "";
+    var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    for ( var i = 0; i < length; i++ ) {
+        text += possible.charAt( Math.floor( Math.random() * possible.length ) );
+    }
+
+    return text;
+}
+
+</script>
+<style type="text/css">
+    body {
+        margin: 0;
+        padding: 0;
+    }
+
+    #adressbar_wrapper {
+        height: 30px;
+        line-height: 30px;
+    }
+
+    #adressbar_wrapper form {
+        display: table;
+        border: 0;
+        border-collapse: collapse;
+        width: 100%;
+        height: 100%;
+    }
+
+    #adressbar_wrapper form > * {
+        display: table-cell;
+        padding: 0;
+        margin: 0;
+    }
+
+    #adressbar_wrapper form > *:first-child {
+        width: 99%;
+    }
+
+    #adressbar_wrapper form > *:first-child > * {
+        border: 1px solid #CCC;
+    }
+
+    #adressbar_wrapper form input[type=text] {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        border: 0;
+        border-collapse: collapse;
+        line-height: 20px;
+        min-width: 1px;
+    }
+
+    #adressbar_wrapper.hide {
+        display: none;
+    }
+
+    #adressbar_wrapper.hide + #iframe_wrapper {
+        top: 0px;
+    }
+
+    #iframe_wrapper {
+        position: absolute;
+        top: 30px;
+        bottom: 0;
+        right: 0;
+        left: 0;
+    }
+
+    #iframe_wrapper iframe {
+        padding: 0;
+        margin: 0;
+        border: 0;
+        border-collapse: collapse;
+        height: 100%;
+        width: 100%;
+    }
+</style>
+</head>
+<body>
+
+<div id="adressbar_wrapper">
+
+    <form id="adressbar_form">
+        <label>
+            <div>
+                <input id="url" type="text" placeholder="URL"/>
+            </div>
+        </label>
+        <label>
+            <input type="submit" value="Go"/>
+        </label>
+        <label>
+            <input type="button" value="Back"/>
+        </label>
+        <label>
+            <input type="button" value="Forward"/>
+        </label>
+    </form>
+
+</div>
+
+
+<div id="iframe_wrapper">
+    <iframe id="iframe"></iframe>
+</div>
+
+</body>
+</html>
